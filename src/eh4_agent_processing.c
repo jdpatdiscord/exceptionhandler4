@@ -18,16 +18,71 @@ int EH4_ReadExceptionPointers(
     return 0;
 }
 
-int EH4_ProcessCXXException(
+int EH4_ProcessGNUCXXException(
     _In_ HANDLE hProcess,
     _In_ PEXCEPTION_POINTERS pExceptionPointers
 )
 {
-    if (pExceptionPointers->ExceptionRecord->ExceptionCode != 0xE06D7363)
+    return 0;
+}
+
+#define PAGE_CHUNK 0x1000
+
+int EH4_ReadRemoteStringA(
+    _In_  HANDLE hProcess,
+    _In_  PCVOID pRemoteString,
+    _Out_writes_z_(cchBuffer) LPSTR pBuffer,
+    _In_  SIZE_T cchBuffer
+)
+{
+    if (cchBuffer == 0)
     {
-        DebugPrint(L"Not a CXX exception");
-        return 0;
+        return 1;
     }
+
+    pBuffer[0] = '\0';
+
+    if (!pRemoteString)
+    {
+        return 1;
+    }
+
+    SIZE_T offset = 0;
+    SIZE_T maxLen = cchBuffer - 1;
+    ULONG_PTR addr = (ULONG_PTR)pRemoteString;
+
+    while (offset < maxLen)
+    {
+        SIZE_T toPageEnd = ((addr + PAGE_CHUNK) & ~(PAGE_CHUNK - 1)) - addr;
+        SIZE_T toRead = min(toPageEnd, maxLen - offset);
+        SIZE_T nRead;
+
+        if (!ReadProcessMemory(hProcess, (PVOID)addr, pBuffer + offset, toRead, &nRead))
+        {
+            pBuffer[offset] = '\0';
+            return (offset > 0) ? 0 : 2;
+        }
+
+        char* null = memchr(pBuffer + offset, '\0', nRead);
+        if (null)
+        {
+            return 0;
+        }
+
+        offset += nRead;
+        addr += nRead;
+    }
+
+    pBuffer[maxLen] = '\0';
+    return 0;
+}
+
+int EH4_ProcessMSCCXXException(
+    _In_ HANDLE hProcess,
+    _In_ PEXCEPTION_POINTERS pExceptionPointers
+)
+{
+    SIZE_T ReadBytesN;
 
     if (pExceptionPointers->ExceptionRecord->NumberParameters < 3)
     {
@@ -66,12 +121,32 @@ int EH4_ProcessCXXException(
         return 0;
     }
 
+    char ExceptionWhat[512];
+    strcpy_s(ExceptionWhat, sizeof(ExceptionWhat), "[EH4] Unknown exception!");
+
+    EH_STL_EXCEPTION STLExceptionRemoteCopy;
+    if (pExceptionObject && !ReadProcessMemory(hProcess, pExceptionObject, &STLExceptionRemoteCopy, sizeof(STLExceptionRemoteCopy), &ReadBytesN))
+    {
+        DebugPrint(L"Couldn't read external process for EH_STL_EXCEPTION");
+        return 3;
+    }
+
+    if (STLExceptionRemoteCopy.what && EH4_ReadRemoteStringA(hProcess, STLExceptionRemoteCopy.what, ExceptionWhat, sizeof(ExceptionWhat)))
+    {
+        DebugPrint(L"Couldn't read external process for ExceptionWhat");
+        return 4;
+    }
+
+    if (STLExceptionRemoteCopy.what)
+    {
+        DebugPrint(L"\t\tpExceptionObject -> .what(): %S", ExceptionWhat);
+    }
+
     EH_THROWINFO_RELATIVE ThrowInfo;
-    SIZE_T ReadBytesN;
     if (!ReadProcessMemory(hProcess, pThrowInfo, &ThrowInfo, sizeof(ThrowInfo), &ReadBytesN))
     {
         DebugPrint(L"Couldn't read external process for EH_THROWINFO_RELATIVE");
-        return 3;
+        return 5;
     }
 
     DebugPrint(L"\tThrowInfo.attributes:           %08X", ThrowInfo.attributes);
@@ -90,7 +165,7 @@ int EH4_ProcessCXXException(
     if (!ReadProcessMemory(hProcess, pCatchableTypeArray, &CatchableTypeArray, sizeof(int), &ReadBytesN))
     {
         DebugPrint(L"Couldn't read external process for EH_CATCHABLETYPEARRAY_RELATIVE");
-        return 4;
+        return 6;
     }
 
     DebugPrint(L"\tCatchableTypeArray.nCatchableTypes: %i", CatchableTypeArray.nCatchableTypes);
@@ -99,7 +174,7 @@ int EH4_ProcessCXXException(
     if (!TypeRVAs)
     {
         DebugPrint(L"Couldn't malloc for CatchableTypeArray.nCatchableTypes");
-        return 4;
+        return 7;
     }
 
     PVOID pArrayStart = (PVOID)((ULONG_PTR)pCatchableTypeArray + sizeof(int));
@@ -111,7 +186,7 @@ int EH4_ProcessCXXException(
             &ReadBytesN))
     {
         free(TypeRVAs);
-        return 6;
+        return 8;
     }
 
     for (int i = 0; i < CatchableTypeArray.nCatchableTypes; ++i)
@@ -139,6 +214,33 @@ int EH4_ProcessCXXException(
     }
 
     free(TypeRVAs);
+
+    return 0;
+}
+
+int EH4_ProcessCXXException(
+    _In_ HANDLE hProcess,
+    _In_ PEXCEPTION_POINTERS pExceptionPointers
+)
+{
+    DWORD ExceptionCode = pExceptionPointers->ExceptionRecord->ExceptionCode;
+    if (ExceptionCode != '\xe0msc' && ExceptionCode != ' GCC') 
+    {
+        DebugPrint(L"Not a CXX exception");
+        return 0;
+    }
+
+    if (ExceptionCode == '\xe0msc')
+    {
+        DebugPrint(L"Microsoft ABI exception");
+        return EH4_ProcessMSCCXXException(hProcess, pExceptionPointers);
+    }
+
+    if (ExceptionCode == ' GCC')
+    {
+        DebugPrint(L"GNU libstd++ ABI exception");
+        return EH4_ProcessGNUCXXException(hProcess, pExceptionPointers);
+    }
 
     return 0;
 }

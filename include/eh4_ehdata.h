@@ -344,6 +344,15 @@ typedef struct _EH_SEPIPTOSTATEMAPENTRY4
     int dispOfIPMap;
 } EH_SEPIPTOSTATEMAPENTRY4, *PEH_SEPIPTOSTATEMAPENTRY4;
 
+// Microsoft STL and LLVM's libcxx are the same here.
+// libcxx differs though if _LIBCPP_ABI_VCRUNTIME is disabled.
+typedef struct _EH_STL_EXCEPTION
+{
+    void* vft;
+    const char* what;
+    BOOLEAN unmanaged;
+} EH_STL_EXCEPTION, *PEH_STL_EXCEPTION;
+
 #pragma pack(pop)
 
 #endif

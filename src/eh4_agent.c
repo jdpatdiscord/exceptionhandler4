@@ -55,6 +55,8 @@ int main(int argc, char* argv[])
     else
     {
         DebugPrint(L"[Watchdog] Unexpected result from WaitForMultipleObjects: %u", GetLastError());
+
+        return 2;
     }
 
     // if it wasn't hCrashEvent
