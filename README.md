@@ -15,8 +15,11 @@ to parse both [PDB/CodeView](https://llvm.org/docs/PDB/index.html) and [DWARF](h
 while being defensively programmed as to not cause crashes.
 
 And it will *always* try to get you feedback, so that you know your program
-has crashed. EH4 makes use of a watchdog agent that immediately gets
-notified via duplicated handle that the client process has crashed and will
-begin the crash handling process.
+has crashed. For reliability reasons, EH4 makes use of a watchdog agent that 
+immediately gets notified via duplicated handle that the client process has 
+crashed and will begin the crash handling process. If we try to handle the
+crash while within the process and not deferring externally as soon as
+possible, the higher the chance the process dies. And you're left wondering
+why a user says they crashed with no report to back it up.
 
 Check the `tests` folder for examples on how to use this project.
