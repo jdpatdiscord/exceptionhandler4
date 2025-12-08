@@ -37,7 +37,38 @@ int main(int argc, char* argv[])
 
     SetEvent(hStartEvent);
 
-    WaitForSingleObject(hCrashEvent, INFINITE);
+    HANDLE Handles[2];
+    Handles[0] = hCrashEvent;
+    Handles[1] = hClientProcess;
+
+    DWORD waitResult = WaitForMultipleObjects(2, Handles, FALSE, INFINITE);
+
+    DWORD index = 0;
+    if (waitResult >= WAIT_OBJECT_0 && waitResult <= WAIT_OBJECT_0 + _countof(Handles) - 1)
+    {
+        index = waitResult - WAIT_OBJECT_0;
+    }
+    else if (waitResult >= WAIT_ABANDONED_0 && waitResult <= WAIT_ABANDONED_0 + _countof(Handles) - 1)
+    {
+        index = waitResult - WAIT_ABANDONED_0;
+    }
+    else
+    {
+        DebugPrint(L"[Watchdog] Unexpected result from WaitForMultipleObjects: %u", GetLastError());
+    }
+
+    // if it wasn't hCrashEvent
+    if (index != 0)
+    {
+        DWORD dwExitCode;
+        GetExitCodeProcess(hClientProcess, &dwExitCode);
+
+        DebugPrint(L"[Watchdog] Process exited with code %u; exiting now", dwExitCode);
+
+        CloseHandle(hClientProcess);
+
+        return 0;
+    }
 
     DebugPrint(L"[Watchdog] Received crash notification");
 
@@ -46,6 +77,8 @@ int main(int argc, char* argv[])
     DebugPrint(L"[Watchdog] Terminating client process");
 
     TerminateProcess(hClientProcess, 1);
+
+    CloseHandle(hClientProcess);
 
     DebugPrint(L"[Watchdog] Watchdog lifecycle is finished, exiting now");
 
