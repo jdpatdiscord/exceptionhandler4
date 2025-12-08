@@ -13,3 +13,10 @@ bad issues; they do not call the user's handler function pointer.
 This project will have, when finished, custom unwinding which will be able
 to parse both [PDB/CodeView](https://llvm.org/docs/PDB/index.html) and [DWARF](https://dwarfstd.org/),
 while being defensively programmed as to not cause crashes.
+
+And it will *always* try to get you feedback, so that you know your program
+has crashed. EH4 makes use of a watchdog agent that immediately gets
+notified via duplicated handle that the client process has crashed and will
+begin the crash handling process.
+
+Check the `tests` folder for examples on how to use this project.
