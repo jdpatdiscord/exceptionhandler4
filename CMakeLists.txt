@@ -48,6 +48,8 @@ add_library(eh4
     src/eh4.c
 )
 
+target_link_libraries(eh4 PUBLIC ntdll)
+
 set_target_properties(eh4 PROPERTIES C_STANDARD 99)
 set_target_properties(eh4 PROPERTIES C_EXTENSIONS OFF)
 
@@ -78,6 +80,8 @@ add_executable(eh4_watchdog
     src/eh4_agent.c
     src/eh4_agent_processing.c
     )
+
+target_link_libraries(eh4_watchdog PUBLIC ntdll)
 
 set_target_properties(eh4_watchdog PROPERTIES C_STANDARD 99)
 set_target_properties(eh4_watchdog PROPERTIES C_EXTENSIONS OFF)
