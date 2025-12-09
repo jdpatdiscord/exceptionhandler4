@@ -43,6 +43,22 @@ EH4_ProcessGNUCXXException(
     _In_ PEXCEPTION_POINTERS pExceptionPointers
     );
 
+///// XState //////////////////////////////////////////////////////////////////
+
+EXTERN_C
+int
+EH4_ProcessXStateCET(
+    _In_ HANDLE hProcess,
+    _In_ PEXCEPTION_POINTERS pExceptionPointers
+    );
+
+EXTERN_C
+int
+EH4_ProcessXStateFP(
+    _In_ HANDLE hProcess,
+    _In_ PEXCEPTION_POINTERS pExceptionPointers
+    );
+
 ///// Unwind //////////////////////////////////////////////////////////////////
 
 // Attempts to unwind the stack of an exception and gather as much info as

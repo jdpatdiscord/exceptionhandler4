@@ -1,7 +1,6 @@
 #include <eh4_watchdog.h>
-#include <DbgHelp.h>
 
-int EH4_UnwindExceptionDbghelp(
+int EH4_ProcessXStateCET(
     _In_ HANDLE hProcess,
     _In_ PEXCEPTION_POINTERS pExceptionPointers
 )
@@ -9,7 +8,7 @@ int EH4_UnwindExceptionDbghelp(
     return 0;
 }
 
-int EH4_UnwindException(
+int EH4_ProcessXStateFP(
     _In_ HANDLE hProcess,
     _In_ PEXCEPTION_POINTERS pExceptionPointers
 )

@@ -81,9 +81,11 @@ add_executable(eh4_watchdog
     src/watchdog/process.c
     src/watchdog/cxxexception.c
     src/watchdog/util.c
+    src/watchdog/unwind.c
+    src/watchdog/xstate.c
     )
 
-target_link_libraries(eh4_watchdog PUBLIC ntdll)
+target_link_libraries(eh4_watchdog PUBLIC ntdll dbghelp)
 
 set_target_properties(eh4_watchdog PROPERTIES C_STANDARD 99)
 set_target_properties(eh4_watchdog PROPERTIES C_EXTENSIONS OFF)
