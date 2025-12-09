@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.2)
 
-project(exceptionhandler4 LANGUAGES C CXX)
+project(exceptionhandler4 LANGUAGES C CXX ASM_MASM)
 
 ##### Clangd ##################################################################
 
@@ -42,13 +42,41 @@ if(CMAKE_GENERATOR MATCHES "Ninja" OR CMAKE_GENERATOR MATCHES "Makefile")
     COMMENT "Copying compile_commands.json to project root for clangd")
 endif()
 
+##### KNSoft's Hooking Library ################################################
+
+add_library(knsoft_detours
+    src/kndetours/Disassembler.c
+    src/kndetours/InlineHook.c
+    src/kndetours/Instruction.c
+    src/kndetours/Memory.c
+    src/kndetours/Thread.c
+    src/kndetours/Trampoline.c
+    src/kndetours/Transaction.c
+    )
+
+target_link_libraries(knsoft_detours PUBLIC ntdll)
+
+if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    target_compile_options(knsoft_detours PRIVATE
+        -Wno-pragma-pack
+        -Wno-microsoft-static-assert
+        -Wno-c23-extensions
+        -Wno-microsoft-enum-forward-reference
+        )
+endif()
+
+target_include_directories(knsoft_detours SYSTEM PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/phnt>
+    )
+
 ##### Library #################################################################
 
 add_library(eh4
     src/eh4.c
+    src/kiuserexceptiondispatcher.asm
 )
 
-target_link_libraries(eh4 PUBLIC ntdll)
+target_link_libraries(eh4 PUBLIC ntdll knsoft_detours)
 
 set_target_properties(eh4 PROPERTIES C_STANDARD 99)
 set_target_properties(eh4 PROPERTIES C_EXTENSIONS OFF)
@@ -64,6 +92,7 @@ endif()
 
 target_include_directories(eh4 PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/kndetours>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     )
 
@@ -113,15 +142,29 @@ target_include_directories(eh4_watchdog SYSTEM PUBLIC
 option(EH4_BUILD_TESTS "Build tests" ON)
 
 if(EH4_BUILD_TESTS)
-    enable_testing()
-
     file(GLOB EH4_TEST_SOURCES tests/test_*.c tests/test_*.cpp)
 
     foreach(TEST_SOURCE ${EH4_TEST_SOURCES})
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
+        get_filename_component(TEST_DIR ${TEST_SOURCE} DIRECTORY)
         get_filename_component(TEST_EXT ${TEST_SOURCE} EXT)
-        
-        add_executable(${TEST_NAME} ${TEST_SOURCE})
+
+        set(TEST_SOURCES ${TEST_SOURCE})
+
+        set(TEST_ASM "${TEST_DIR}/${TEST_NAME}.asm")
+        if(EXISTS ${TEST_ASM})
+            message(STATUS "Found ASM for ${TEST_NAME}: ${TEST_ASM}")
+            configure_file(${TEST_ASM} ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.asm COPYONLY)
+            list(APPEND TEST_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.asm)
+        endif()
+
+        add_executable(${TEST_NAME} ${TEST_SOURCES})
+
+        if(MSVC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
+            target_link_options(${TEST_NAME} PRIVATE
+                /CETCOMPAT
+            )
+        endif()
 
         if(TEST_EXT STREQUAL ".cpp")
             set_target_properties(${TEST_NAME} PROPERTIES
@@ -145,18 +188,15 @@ if(EH4_BUILD_TESTS)
         endif()
 
         target_link_libraries(${TEST_NAME} PRIVATE eh4)
-
-        add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
     endforeach()
 endif()
-
 
 ##### Install #################################################################
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-install(TARGETS eh4
+install(TARGETS eh4 knsoft_detours
     EXPORT eh4Targets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

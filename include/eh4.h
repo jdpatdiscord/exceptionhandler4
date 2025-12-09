@@ -14,7 +14,12 @@
 
 typedef struct _EH4_SETTINGS
 {
-    int test;
+    // SetErrorMode setting, see https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-seterrormode
+    // Only SEM_FAILCRITICALERRORS is recommended.
+    int sem;
+
+    // Call the previously set unhandled exception filter afterwards.
+    BOOLEAN callPreviousHandler;
 } EH4_SETTINGS, *PEH4_SETTINGS;
 
 EXTERN_C int EH4_Attach(PEH4_SETTINGS Settings);
@@ -22,7 +27,10 @@ EXTERN_C int EH4_Detach();
 
 EXTERN_C void DebugPrint(const wchar_t* format, ...);
 
+EXTERN_C EH4_SETTINGS g_settings;
+
 EXTERN_C LPTOP_LEVEL_EXCEPTION_FILTER g_pfnPreviousFilter;
+EXTERN_C UINT g_uLastErrorMode;
 EXTERN_C PEXCEPTION_POINTERS g_pStoredExceptionInformation;
 EXTERN_C HANDLE g_hExceptionHandlerWatchdogProcess;
 EXTERN_C HANDLE g_hCrashNotificationEvent;

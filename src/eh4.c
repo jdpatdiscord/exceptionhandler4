@@ -5,6 +5,8 @@
 #define EH4_SOURCE_FILE // Read by eh4.h to not include Windows.h.
 #include <eh4.h>
 
+#include <SlimDetours.h>
+
 void DebugPrint(const wchar_t* format, ...)
 {
     static wchar_t buffer[1024];
@@ -20,7 +22,16 @@ void DebugPrint(const wchar_t* format, ...)
 typedef NTSTATUS(NTAPI* T_NtSuspendProcess)(HANDLE Process);
 T_NtSuspendProcess g_pfnNtSuspendProcess = NULL;
 
+typedef NTSTATUS (NTAPI *T_ZwRaiseException)(PEXCEPTION_RECORD ExceptionRecord, PCONTEXT ContextRecord, BOOLEAN FirstChance);
+T_ZwRaiseException g_pfnZwRaiseException = NULL;
+
+typedef VOID (NTAPI *T_KiUserExceptionDispatcher)(PEXCEPTION_RECORD ExceptionRecord, PCONTEXT ContextRecord);
+T_KiUserExceptionDispatcher g_pfnKiUserExceptionDispatcher = NULL;
+
+EH4_SETTINGS g_settings;
+
 LPTOP_LEVEL_EXCEPTION_FILTER g_pfnPreviousFilter = NULL;
+UINT g_uLastErrorMode = 0;
 PEXCEPTION_POINTERS g_pStoredExceptionInformation = NULL;
 HANDLE g_hExceptionHandlerWatchdogProcess = INVALID_HANDLE_VALUE;
 HANDLE g_hCrashNotificationEvent = INVALID_HANDLE_VALUE;
@@ -31,10 +42,170 @@ HANDLE g_hCurrentProcess = INVALID_HANDLE_VALUE;
 HANDLE g_hWatchdogThread = INVALID_HANDLE_VALUE;
 BOOL g_bStopFlag = FALSE;
 
+EXTERN_C void EH4_KiUserExceptionDispatcher_ASM(void);
+
+void EH4_KiUserExceptionDispatcher_C(PCONTEXT ContextRecord, PEXCEPTION_RECORD ExceptionRecord)
+{
+    DebugPrint(
+        L"[EH4] KiUserExceptionDispatcher: Code=%08X ExceptionAddress=%p rip=%p rsp=%p",
+        ExceptionRecord->ExceptionCode,
+        ExceptionRecord->ExceptionAddress,
+        ContextRecord->Rip,
+        ContextRecord->Rsp
+        );
+    
+    return;
+}
+
+int EH4_InstallDispatcherHook()
+{
+    HMODULE hNtDll = GetModuleHandleW(L"ntdll");
+    if (!hNtDll)
+    {
+        return 1;
+    }
+
+    g_pfnKiUserExceptionDispatcher = (T_KiUserExceptionDispatcher)GetProcAddress(hNtDll, "KiUserExceptionDispatcher");
+    if (!g_pfnKiUserExceptionDispatcher)
+    {
+        return 2;
+    }
+
+    DETOUR_TRANSACTION_OPTIONS Options;
+    Options.fSuspendThreads = FALSE;
+
+    HRESULT hr = SlimDetoursTransactionBeginEx(&Options);
+    if (FAILED(hr))
+    {
+        DebugPrint(L"[EH4] SlimDetoursTransactionBeginEx failed: %08x", hr);
+        return 3;
+    }
+
+    hr = SlimDetoursAttach((PVOID*)&g_pfnKiUserExceptionDispatcher, EH4_KiUserExceptionDispatcher_ASM);
+    if (FAILED(hr))
+    {
+        DebugPrint(L"[EH4] SlimDetoursAttach failed: %08x", hr);
+        SlimDetoursTransactionAbort();
+        return 4;
+    }
+
+    hr = SlimDetoursTransactionCommit();
+    if (FAILED(hr))
+    {
+        DebugPrint(L"[EH4] SlimDetoursTransactionCommit failed: %08x", hr);
+        return 5;
+    }
+
+    DebugPrint(L"[EH4] Installed KiUserExceptionDispatcher hook\n");
+
+    return 0;
+}
+
+// static volatile LONG g_bInHook = FALSE;
+
+NTSTATUS NTAPI EH4_ZwRaiseException_Hook(PEXCEPTION_RECORD ExceptionRecord, PCONTEXT ContextRecord, BOOLEAN FirstChance)
+{
+    // if (InterlockedCompareExchange(&g_bInHook, TRUE, FALSE))
+    // {
+    //     return g_pfnZwRaiseException(ExceptionRecord, ContextRecord, FirstChance);
+    // }
+
+    PVOID ReturnAddress = _ReturnAddress();
+    LONG_PTR Distance = (ULONG_PTR)ReturnAddress - (ULONG_PTR)g_pfnKiUserExceptionDispatcher;
+
+    if (Distance >= 0 && Distance < 128)
+    {
+        EXCEPTION_POINTERS ExceptionPointers;
+        ExceptionPointers.ExceptionRecord = ExceptionRecord;
+        ExceptionPointers.ContextRecord = ContextRecord;
+
+        g_pStoredExceptionInformation = &ExceptionPointers;
+
+        SetEvent(g_hCrashNotificationEvent);
+        g_pfnNtSuspendProcess(g_hCurrentProcess);
+    }
+
+    // InterlockedExchange(&g_bInHook, FALSE);
+
+    return g_pfnZwRaiseException(ExceptionRecord, ContextRecord, FirstChance);
+}
+
+int EH4_InstallRaiseHook()
+{
+    HMODULE hNtDll = GetModuleHandleW(L"ntdll");
+    if (!hNtDll)
+    {
+        return 1;
+    }
+
+    g_pfnZwRaiseException = (T_ZwRaiseException)GetProcAddress(hNtDll, "ZwRaiseException");
+    if (!g_pfnZwRaiseException)
+    {
+        return 2;
+    }
+
+    DETOUR_TRANSACTION_OPTIONS Options;
+    Options.fSuspendThreads = FALSE;
+
+    HRESULT hr = SlimDetoursTransactionBeginEx(&Options);
+    if (FAILED(hr))
+    {
+        DebugPrint(L"[EH4] SlimDetoursTransactionBeginEx failed: %08X", hr);
+        return 4;
+    }
+
+    hr = SlimDetoursAttach((PVOID*)&g_pfnZwRaiseException, EH4_ZwRaiseException_Hook);
+    if (FAILED(hr))
+    {
+        DebugPrint(L"[EH4] SlimDetoursAttach failed: %08X", hr);
+        SlimDetoursTransactionAbort();
+        return 5;
+    }
+
+    hr = SlimDetoursTransactionCommit();
+    if (FAILED(hr))
+    {
+        DebugPrint(L"[EH4] SlimDetoursTransactionCommit failed: %08X", hr);
+        return 6;
+    }
+
+    DebugPrint(L"[EH4] Installed ZwRaiseException hook\n");
+
+    return 0;
+}
+
+int EH4_RemoveRaiseHook()
+{
+    DETOUR_TRANSACTION_OPTIONS Options;
+    Options.fSuspendThreads = FALSE;
+
+    HRESULT hr = SlimDetoursTransactionBeginEx(&Options);
+    if (FAILED(hr))
+    {
+        DebugPrint(L"[EH4] SlimDetoursTransactionBeginEx failed: %08X", hr);
+        return 1;
+    }
+
+    hr = SlimDetoursDetach((PVOID*)&g_pfnZwRaiseException, EH4_ZwRaiseException_Hook);
+    if (FAILED(hr))
+    {
+        DebugPrint(L"[EH4] SlimDetoursDetach failed: %08X", hr);
+        SlimDetoursTransactionAbort();
+        return 2;
+    }
+
+    hr = SlimDetoursTransactionCommit();
+    if (FAILED(hr))
+    {
+        DebugPrint(L"[EH4] SlimDetoursTransactionCommit failed: %08X", hr);
+        return 3;
+    }
+
+    return 0;
+}
+
 LONG EH4_UnhandledExceptionHandler(PEXCEPTION_POINTERS ExceptionInfo)
 {
-    DWORD Code = ExceptionInfo->ExceptionRecord->ExceptionCode;
-
     g_pStoredExceptionInformation = ExceptionInfo;
 
     SetEvent(g_hCrashNotificationEvent);
@@ -103,6 +274,8 @@ ULONG EH4_AgentWatchdogProc(LPVOID Argument)
 
 int EH4_Attach(PEH4_SETTINGS Settings)
 {
+    memcpy(&g_settings, Settings, sizeof(*Settings));
+
     WCHAR szCmdLine[512];
 
     STARTUPINFOW si;
@@ -251,6 +424,9 @@ int EH4_Attach(PEH4_SETTINGS Settings)
 
     DebugPrint(L"[EH4] WaitForSingleObject resumed hStartedEvent");
 
+    // EH4_InstallDispatcherHook();
+    EH4_InstallRaiseHook();
+
     g_pfnPreviousFilter = SetUnhandledExceptionFilter(EH4_UnhandledExceptionHandler);
 
     return 0;
@@ -259,6 +435,8 @@ int EH4_Attach(PEH4_SETTINGS Settings)
 int EH4_Detach()
 {
     g_bStopFlag = TRUE;
+
+    EH4_RemoveRaiseHook();
 
     TerminateProcess(g_hExceptionHandlerWatchdogProcess, 0);
     WaitForSingleObject(g_hWatchdogThread, INFINITE);
@@ -270,6 +448,8 @@ int EH4_Detach()
     CloseHandle(g_hCrashNotificationEvent);
 
     SetUnhandledExceptionFilter(g_pfnPreviousFilter);
+
+    DebugPrint(L"[EH4] Detached");
 
     return 0;
 }

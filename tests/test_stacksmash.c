@@ -1,7 +1,6 @@
 #include <eh4.h>
 
-#include <stdexcept>
-#include <iostream>
+EXTERN_C void WreckIt(void);
 
 int main(int argc, char* argv[])
 {
@@ -12,14 +11,7 @@ int main(int argc, char* argv[])
 
     EH4_Attach(&settings);
 
-    try
-    {
-        throw;
-    }
-    catch(...)
-    {
-        std::cout << "should never be reached" << std::endl;
-    }
+    WreckIt();
 
     return 0;
 }
