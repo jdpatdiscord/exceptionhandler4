@@ -77,8 +77,10 @@ target_include_directories(eh4 SYSTEM PUBLIC
 ##### Watchdog ################################################################
 
 add_executable(eh4_watchdog
-    src/eh4_agent.c
-    src/eh4_agent_processing.c
+    src/watchdog/main.c
+    src/watchdog/process.c
+    src/watchdog/cxxexception.c
+    src/watchdog/util.c
     )
 
 target_link_libraries(eh4_watchdog PUBLIC ntdll)

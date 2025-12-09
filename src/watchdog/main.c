@@ -1,6 +1,6 @@
 #include <phnt.h>
 
-#include <eh4_agent_processing.h>
+#include <eh4_watchdog.h>
 
 void DebugPrint(const wchar_t* format, ...)
 {
