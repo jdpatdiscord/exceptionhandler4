@@ -22,6 +22,12 @@ typedef struct _EH4_SETTINGS
     BOOLEAN callPreviousHandler;
 } EH4_SETTINGS, *PEH4_SETTINGS;
 
+typedef struct _EH4_CRASHINFO
+{
+    PEXCEPTION_POINTERS pStoredExceptionInformation;
+    INT ThreadId;
+} EH4_CRASHINFO, *PEH4_CRASHINFO;
+
 EXTERN_C int EH4_Attach(PEH4_SETTINGS Settings);
 EXTERN_C int EH4_Detach();
 
@@ -31,7 +37,7 @@ EXTERN_C EH4_SETTINGS g_settings;
 
 EXTERN_C LPTOP_LEVEL_EXCEPTION_FILTER g_pfnPreviousFilter;
 EXTERN_C UINT g_uLastErrorMode;
-EXTERN_C PEXCEPTION_POINTERS g_pStoredExceptionInformation;
+EXTERN_C PEH4_CRASHINFO g_pStoredExceptionInformation;
 EXTERN_C HANDLE g_hExceptionHandlerWatchdogProcess;
 EXTERN_C HANDLE g_hCrashNotificationEvent;
 EXTERN_C HANDLE g_hCrashNotificationEventHandle;

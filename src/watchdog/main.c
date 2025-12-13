@@ -2,6 +2,8 @@
 
 #include <eh4_watchdog.h>
 
+#include <cJSON.h>
+
 void DebugPrint(const wchar_t* format, ...)
 {
     static wchar_t buffer[1024];
@@ -14,10 +16,30 @@ void DebugPrint(const wchar_t* format, ...)
     wprintf(L"%s\n", buffer);
 }
 
+typedef NTSTATUS(NTAPI* T_NtResumeProcess)(HANDLE Process);
+T_NtResumeProcess g_pfnNtResumeProcess = NULL;
+
+void ResumeProcess(HANDLE hProcess)
+{
+    HANDLE hNtdll = GetModuleHandleW(L"ntdll");
+    if (!hNtdll)
+    {
+        return;
+    }
+
+    g_pfnNtResumeProcess = (T_NtResumeProcess)GetProcAddress(hNtdll, "NtResumeProcess");
+    if (!g_pfnNtResumeProcess)
+    {
+        return;
+    }
+
+    g_pfnNtResumeProcess(hProcess);
+}
+
 int main(int argc, char* argv[])
 {
     DebugPrint(L"[Watchdog] External process started");
-    if (argc < 5)
+    if (argc < 6)
     {
         DebugPrint(L"[Watchdog] Not enough arguments, exiting now");
         return 1;
@@ -27,6 +49,7 @@ int main(int argc, char* argv[])
     const char* crashEventHandleStr = argv[2];
     const char* startEventHandleStr = argv[3];
     const char* exceptionPtrStr = argv[4];
+    const char* callPreviousStr = argv[5];
 
     char* endParse;
 
@@ -34,6 +57,7 @@ int main(int argc, char* argv[])
     HANDLE hCrashEvent = (HANDLE)strtoull(crashEventHandleStr, &endParse, 16);
     HANDLE hStartEvent = (HANDLE)strtoull(startEventHandleStr, &endParse, 16);
     LPVOID pStoredExceptionInformation = (LPVOID)strtoull(exceptionPtrStr, &endParse, 16);
+    BOOLEAN callPreviousHandler = (BOOLEAN)strtoul(callPreviousStr, &endParse, 10);
 
     SetEvent(hStartEvent);
 
@@ -76,9 +100,18 @@ int main(int argc, char* argv[])
 
     EH4_ProcessException(hClientProcess, pStoredExceptionInformation);
 
-    DebugPrint(L"[Watchdog] Terminating client process");
+    if (callPreviousHandler)
+    {
+        DebugPrint(L"[Watchdog] Resuming process to call previous handler");
 
-    TerminateProcess(hClientProcess, 1);
+        g_pfnNtResumeProcess(hClientProcess);
+    }
+    else
+    {
+        DebugPrint(L"[Watchdog] Terminating client process");
+
+        TerminateProcess(hClientProcess, 1);
+    }
 
     CloseHandle(hClientProcess);
 

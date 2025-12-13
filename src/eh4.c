@@ -32,7 +32,7 @@ EH4_SETTINGS g_settings;
 
 LPTOP_LEVEL_EXCEPTION_FILTER g_pfnPreviousFilter = NULL;
 UINT g_uLastErrorMode = 0;
-PEXCEPTION_POINTERS g_pStoredExceptionInformation = NULL;
+PEH4_CRASHINFO g_pStoredExceptionInformation = NULL;
 HANDLE g_hExceptionHandlerWatchdogProcess = INVALID_HANDLE_VALUE;
 HANDLE g_hCrashNotificationEvent = INVALID_HANDLE_VALUE;
 HANDLE g_hCrashNotificationEventHandle = INVALID_HANDLE_VALUE;
@@ -119,7 +119,11 @@ NTSTATUS NTAPI EH4_ZwRaiseException_Hook(PEXCEPTION_RECORD ExceptionRecord, PCON
         ExceptionPointers.ExceptionRecord = ExceptionRecord;
         ExceptionPointers.ContextRecord = ContextRecord;
 
-        g_pStoredExceptionInformation = &ExceptionPointers;
+        EH4_CRASHINFO CrashInfo;
+        CrashInfo.pStoredExceptionInformation = &ExceptionPointers;
+        CrashInfo.ThreadId = GetCurrentThreadId();
+
+        g_pStoredExceptionInformation = &CrashInfo;
 
         SetEvent(g_hCrashNotificationEvent);
         g_pfnNtSuspendProcess(g_hCurrentProcess);
@@ -206,13 +210,24 @@ int EH4_RemoveRaiseHook()
 
 LONG EH4_UnhandledExceptionHandler(PEXCEPTION_POINTERS ExceptionInfo)
 {
-    g_pStoredExceptionInformation = ExceptionInfo;
+    EH4_CRASHINFO CrashInfo;
+    CrashInfo.pStoredExceptionInformation = ExceptionInfo;
+    CrashInfo.ThreadId = GetCurrentThreadId();
+
+    g_pStoredExceptionInformation = &CrashInfo;
 
     SetEvent(g_hCrashNotificationEvent);
 
     g_pfnNtSuspendProcess(g_hCurrentProcess);
 
-    return EXCEPTION_EXECUTE_HANDLER;
+    if (g_settings.callPreviousHandler)
+    {
+        return g_pfnPreviousFilter(ExceptionInfo);
+    }
+    else
+    {
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
 }
 
 ULONG EH4_AgentWatchdogProc(LPVOID Argument)
@@ -238,11 +253,12 @@ ULONG EH4_AgentWatchdogProc(LPVOID Argument)
         }
 
         swprintf_s(szCmdLine, _countof(szCmdLine), 
-            L"eh4_watchdog.exe %p %p %p %p", 
+            L"eh4_watchdog.exe %p %p %p %p %i", 
             g_hCurrentProcess, 
             g_hCrashNotificationEventHandle, 
             g_hStartedEventHandle, 
-            &g_pStoredExceptionInformation
+            &g_pStoredExceptionInformation,
+            g_settings.callPreviousHandler
         );
 
         if (!CreateProcessW(
@@ -370,11 +386,12 @@ int EH4_Attach(PEH4_SETTINGS Settings)
     }
 
     swprintf_s(szCmdLine, _countof(szCmdLine),
-        L"eh4_watchdog.exe %p %p %p %p",
+        L"eh4_watchdog.exe %p %p %p %p %i",
         g_hCurrentProcess, 
         g_hCrashNotificationEventHandle, 
         g_hStartedEventHandle, 
-        &g_pStoredExceptionInformation
+        &g_pStoredExceptionInformation,
+        g_settings.callPreviousHandler
     );
 
     if (!CreateProcessW(
@@ -418,6 +435,8 @@ int EH4_Attach(PEH4_SETTINGS Settings)
         return 9;
     }
 
+    g_uLastErrorMode = SetErrorMode(g_settings.sem);
+
     DebugPrint(L"[EH4] Waiting on watchdog to say hello");
 
     WaitForSingleObject(g_hStartedEvent, INFINITE);
@@ -436,7 +455,9 @@ int EH4_Detach()
 {
     g_bStopFlag = TRUE;
 
+    SetUnhandledExceptionFilter(g_pfnPreviousFilter);
     EH4_RemoveRaiseHook();
+    SetErrorMode(g_uLastErrorMode);
 
     TerminateProcess(g_hExceptionHandlerWatchdogProcess, 0);
     WaitForSingleObject(g_hWatchdogThread, INFINITE);
@@ -446,8 +467,6 @@ int EH4_Detach()
     CloseHandle(g_hCurrentProcess);
     CloseHandle(g_hStartedEvent);
     CloseHandle(g_hCrashNotificationEvent);
-
-    SetUnhandledExceptionFilter(g_pfnPreviousFilter);
 
     DebugPrint(L"[EH4] Detached");
 

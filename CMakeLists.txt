@@ -44,7 +44,7 @@ endif()
 
 ##### KNSoft's Hooking Library ################################################
 
-add_library(knsoft_detours
+add_library(knsoft_detours STATIC
     src/kndetours/Disassembler.c
     src/kndetours/InlineHook.c
     src/kndetours/Instruction.c
@@ -55,6 +55,7 @@ add_library(knsoft_detours
     )
 
 target_link_libraries(knsoft_detours PUBLIC ntdll)
+target_compile_definitions(knsoft_detours PUBLIC _CRT_SECURE_NO_WARNINGS)
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang")
     target_compile_options(knsoft_detours PRIVATE
@@ -71,7 +72,7 @@ target_include_directories(knsoft_detours SYSTEM PUBLIC
 
 ##### Library #################################################################
 
-add_library(eh4
+add_library(eh4 STATIC
     src/eh4.c
     src/kiuserexceptiondispatcher.asm
 )
@@ -80,6 +81,8 @@ target_link_libraries(eh4 PUBLIC ntdll knsoft_detours)
 
 set_target_properties(eh4 PROPERTIES C_STANDARD 99)
 set_target_properties(eh4 PROPERTIES C_EXTENSIONS OFF)
+
+target_compile_definitions(eh4 PUBLIC _CRT_SECURE_NO_WARNINGS)
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang")
     target_compile_options(eh4 PRIVATE
@@ -112,9 +115,19 @@ add_executable(eh4_watchdog
     src/watchdog/util.c
     src/watchdog/unwind.c
     src/watchdog/xstate.c
+    src/watchdog/registertable.c
     )
 
-target_link_libraries(eh4_watchdog PUBLIC ntdll dbghelp)
+set(ENABLE_CJSON_TEST OFF)
+set(BUILD_SHARED_LIBS OFF)
+add_subdirectory(dep/cJSON)
+
+add_dependencies(eh4_watchdog cjson knsoft_detours)
+target_link_libraries(eh4_watchdog PUBLIC ntdll dbghelp cjson)
+
+target_compile_definitions(cjson PUBLIC _CRT_SECURE_NO_WARNINGS)
+target_compile_definitions(eh4_watchdog PUBLIC _CRT_SECURE_NO_WARNINGS)
+target_include_directories(eh4_watchdog PUBLIC ${cJSON_SOURCE_DIR})
 
 set_target_properties(eh4_watchdog PROPERTIES C_STANDARD 99)
 set_target_properties(eh4_watchdog PROPERTIES C_EXTENSIONS OFF)
@@ -126,6 +139,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         -Wno-c23-extensions
         -Wno-microsoft-enum-forward-reference
         )
+    target_compile_options(cjson PRIVATE
+        -Wno-cast-qual
+        -Wno-long-long
+        -Wno-error=cast-qual
+    )
+
 endif()
 
 target_include_directories(eh4_watchdog PUBLIC
@@ -159,10 +178,11 @@ if(EH4_BUILD_TESTS)
         endif()
 
         add_executable(${TEST_NAME} ${TEST_SOURCES})
+        target_compile_definitions(${TEST_NAME} PUBLIC _CRT_SECURE_NO_WARNINGS)
 
         if(MSVC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
             target_link_options(${TEST_NAME} PRIVATE
-                /CETCOMPAT
+                "LINKER:/CETCOMPAT"
             )
         endif()
 
